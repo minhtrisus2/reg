@@ -16,6 +16,7 @@ def load_model():
 def load_labels():
     """Tải nhãn của ImageNet."""
     labels_url = "https://raw.githubusercontent.com/anishathalye/imagenet-simple-labels/master/imagenet-simple-labels.json"
+    # Dòng này đã được sửa lại chính xác để dùng json.load
     return json.load(urlopen(labels_url))
 
 model = load_model()
