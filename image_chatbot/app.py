@@ -17,11 +17,14 @@ def load_model():
     print("Tải mô hình thành công.")
     return model
 
+import json
+from urllib.request import urlopen
+
 @st.cache_data
 def load_labels():
     """Tải nhãn của ImageNet."""
     labels_url = "https://raw.githubusercontent.com/anishathalye/imagenet-simple-labels/master/imagenet-simple-labels.json"
-    labels = json.load(urlopen(labels_url))
+    labels = json.load(urlopen(labels_url)) # Sửa lại thành json.load
     return labels
 
 model = load_model()
