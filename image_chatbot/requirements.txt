@@ -3,9 +3,4 @@ torch
 torchvision
 timm
 Pillow
-numpy<2.0streamlit
-torch
-torchvision
-timm
-Pillow
 numpy<2.0
