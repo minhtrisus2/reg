@@ -1,93 +1,82 @@
-import os
-import numpy as np
-import tensorflow as tf
-from flask import Flask, request, render_template, jsonify, url_for, send_from_directory
-from werkzeug.utils import secure_filename
+import streamlit as st
+from PIL import Image
+import torch
+import timm
+import json
+from urllib.request import urlopen
 
-# --- CÀI ĐẶT BAN ĐẦU ---
-from tensorflow.keras.applications import EfficientNetB7
-from tensorflow.keras.applications.efficientnet import preprocess_input, decode_predictions
+# --- PHẦN 1: CÀI ĐẶT VÀ TẢI MÔ HÌNH (SỬ DỤNG PYTORCH) ---
 
-print("Đang tải mô hình EfficientNetB7, quá trình này có thể mất vài phút...")
-model = EfficientNetB7(weights='imagenet')
-print("Tải mô hình thành công!")
+@st.cache_resource
+def load_model():
+    """Tải mô hình AI MobileNetV3 bằng PyTorch và Timm."""
+    print("Đang tải mô hình... (chỉ tải một lần)")
+    # Sử dụng MobileNetV3, một mô hình rất nhẹ và hiệu quả
+    model = timm.create_model('mobilenetv3_large_100', pretrained=True)
+    model.eval() # Chuyển mô hình sang chế độ đánh giá
+    print("Tải mô hình thành công.")
+    return model
 
-app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+@st.cache_data
+def load_labels():
+    """Tải nhãn của ImageNet."""
+    labels_url = "https://raw.githubusercontent.com/anishathalye/imagenet-simple-labels/master/imagenet-simple-labels.json"
+    labels = json.load(urlopen(labels_url))
+    return labels
 
-# --- HÀM LOGIC CHÍNH ---
+model = load_model()
+labels = load_labels()
 
-### THAY ĐỔI 1: Thêm từ điển dịch thuật ###
-TRANSLATION_DICT = {
-    'golden_retriever': 'Chó Golden Retriever',
-    'miniature_pinscher': 'Chó Phốc',
-    'chihuahua': 'Chó Chihuahua',
-    'tabby': 'Mèo mướp',
-    'tiger_cat': 'Mèo vằn',
-    'lifeboat': 'Thuyền cứu sinh',
-    'speedboat': 'Tàu cao tốc',
-    'laptop': 'Máy tính xách tay',
-    'sports_car': 'Xe thể thao',
-    # Bạn có thể thêm các bản dịch khác vào đây
-}
+# --- PHẦN 2: HÀM LOGIC NHẬN DẠNG (SỬ DỤNG PYTORCH) ---
 
-def recognize_image(image_path):
-    """Hàm này nhận ảnh, phân tích và trả về một báo cáo nhận dạng chuyên nghiệp bằng tiếng Việt."""
+def recognize_image(image):
+    """Nhận đối tượng ảnh, xử lý và trả về kết quả."""
     try:
-        img = tf.keras.preprocessing.image.load_img(image_path, target_size=(600, 600))
-        img_array = tf.keras.preprocessing.image.img_to_array(img)
-        img_array = np.expand_dims(img_array, axis=0)
-        img_array = preprocess_input(img_array)
-
-        predictions = model.predict(img_array)
-        decoded_predictions = decode_predictions(predictions, top=1)[0]
+        # Lấy cấu hình tiền xử lý của mô hình
+        data_config = timm.data.resolve_data_config(model)
+        transforms = timm.data.create_transform(**data_config, is_training=False)
         
-        top_prediction = decoded_predictions[0]
+        # Tiền xử lý ảnh
+        tensor = transforms(image).unsqueeze(0) # Thêm một chiều cho batch
         
-        english_label = top_prediction[1]
-        confidence = top_prediction[2] * 100
-
-        # Dịch nhãn sang tiếng Việt, nếu không có trong từ điển thì dùng tiếng Anh
-        vietnamese_label = TRANSLATION_DICT.get(english_label, english_label.replace('_', ' '))
-
-        ### THAY ĐỔI 2: Tạo báo cáo phân tích chuyên nghiệp ###
-        # Code mới, chỉ bao gồm thông tin chính
-        report = f"Đối tượng được xác định: <b>{vietnamese_label.capitalize()}</b><br>Độ tin cậy: {confidence:.2f}%"
-        return report
+        # Dự đoán
+        with torch.no_grad():
+            out = model(tensor)
+            
+        # Xử lý kết quả
+        probabilities = torch.nn.functional.softmax(out[0], dim=0)
+        top_prob, top_catid = torch.topk(probabilities, 1) # Lấy 1 kết quả cao nhất
         
+        confidence = top_prob.item() * 100
+        label_name = labels[top_catid.item()].replace('_', ' ')
+        
+        # Định dạng kết quả
+        description = f"Đối tượng được xác định là **{label_name.capitalize()}** với độ tin cậy **{confidence:.2f}%**."
+        return description
+
     except Exception as e:
         return f"Đã có lỗi xảy ra khi xử lý ảnh: {e}"
 
-# --- CÁC ĐƯỜNG DẪN (ROUTES) CỦA WEB --- (Giữ nguyên)
-@app.route('/')
-def home():
-    return render_template('index.html')
+# --- PHẦN 3: XÂY DỰNG GIAO DIỆN WEB ---
 
-@app.route('/recognize_image', methods=['POST'])
-def recognize_image_route():
-    if 'file' not in request.files:
-        return jsonify({'error': 'Không có file nào được gửi đi.'})
+st.set_page_config(layout="wide", page_title="Bot Nhận Dạng Ảnh")
+
+st.title("Bot Nhận Dạng Hình Ảnh")
+st.write("Tải lên một bức ảnh, và AI sẽ cho bạn biết nó nhìn thấy gì.")
+
+uploaded_file = st.file_uploader("Chọn một tệp ảnh...", type=["jpg", "jpeg", "png"])
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
     
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'Chưa chọn file nào.'})
-        
-    if file:
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        
-        description = recognize_image(filepath)
-        
-        return jsonify({'description': description})
-
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-# --- KHỞI ĐỘNG ỨNG DỤNG ---
-if __name__ == '__main__':
-    if not os.path.exists(UPLOAD_FOLDER):
-        os.makedirs(UPLOAD_FOLDER)
-    app.run(port=5000, debug=True)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.image(image, caption="Ảnh bạn đã tải lên", use_container_width=True)
+    
+    with col2:
+        with st.spinner("Bot đang phân tích..."):
+            result = recognize_image(image)
+            st.success("Phân tích hoàn tất!")
+            st.markdown("### Kết quả:")
+            st.markdown(result)
