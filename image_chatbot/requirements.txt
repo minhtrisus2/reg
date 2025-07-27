@@ -1,4 +1,6 @@
 streamlit
-tensorflow-cpu==2.15.0
-numpy<2.0
+torch
+torchvision
+timm
 Pillow
+numpy<2.0
